@@ -1,6 +1,7 @@
 package main
 
 import (
+	"./garoon"
 	calendar "code.google.com/p/google-api-go-client/calendar/v3"
 	"fmt"
 	"log"
@@ -51,9 +52,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	grn := garoon.New(config.Garoon.Account, config.Garoon.Password, config.Garoon.BaseUrl)
+
 	// get Garoon user id
 
-	targetUser, err := UtilGetLoginUserId(&config.Garoon)
+	targetUser, err := grn.UtilGetLoginUserId()
 	if err != nil {
 		log.Fatalf("Failed to access to Garoon : %v", err)
 	}
@@ -76,7 +79,7 @@ func main() {
 
 	syncStart := time.Now() //FirstDayOfMonth(time.Now()).AddDate(0, -1, 0)
 	syncEnd := LastDayOfMonth(time.Now()).AddDate(0, +1, 0)
-	grnEventList, err := ScheduleGetEvents(syncStart, syncEnd, &config.Garoon)
+	grnEventList, err := grn.ScheduleGetEvents(syncStart, syncEnd)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -177,7 +180,7 @@ func main() {
 
 		// Gcal event to be deleted
 
-		grnEventList, err := ScheduleGetEventsById(grnEventId, &config.Garoon)
+		grnEventList, err := grn.ScheduleGetEventsById(grnEventId)
 		if err != nil {
 			log.Fatalf("Failed to fetch a Garoon event(ID=%v): %v\n", grnEventId, err)
 		}
@@ -195,7 +198,7 @@ func main() {
 	}
 }
 
-func eventsAreEqual(grnEvent *GaroonEvent, gcalEvent *calendar.Event) (bool, string) {
+func eventsAreEqual(grnEvent *garoon.GaroonEvent, gcalEvent *calendar.Event) (bool, string) {
 	if grnEvent == nil || gcalEvent == nil {
 		return false, "nil"
 	}
@@ -257,7 +260,7 @@ func getGcalTimeSpan(gcalEvent *calendar.Event) (string, string, error) {
 	return gcalStartDt, gcalEndDt, nil
 }
 
-func getGrnTimeSpan(grnEvent *GaroonEvent) (string, string, error) {
+func getGrnTimeSpan(grnEvent *garoon.GaroonEvent) (string, string, error) {
 	if grnEvent == nil {
 		return "", "", nil
 	}
@@ -309,7 +312,7 @@ func getGrnTimeSpan(grnEvent *GaroonEvent) (string, string, error) {
 	return start, end, nil
 }
 
-func isMemberOfGrnEvent(userId string, grnEvent *GaroonEvent) bool {
+func isMemberOfGrnEvent(userId string, grnEvent *garoon.GaroonEvent) bool {
 	if grnEvent == nil {
 		return false
 	}

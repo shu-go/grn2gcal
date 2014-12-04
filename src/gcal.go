@@ -66,11 +66,11 @@ func FetchGcalEventListByDatetime(gcal *calendar.Service, calendarId string, sta
 }
 
 func getOAuthClient(oauthconfig *oauth.Config, cacheDirName string) *http.Client {
-	cacheFile := tokenCacheFile(oauthconfig)
+	cacheFile := tokenCacheFile(cacheDirName, oauthconfig)
 	token, err := tokenFromFile(cacheFile)
 	if err != nil {
 		token = tokenFromWeb(oauthconfig)
-		saveToken(cacheDirName, cacheFile, token)
+		saveToken(cacheFile, token)
 	} else {
 		//log.Printf("Using cached token %#v from %q", token, cacheFile)
 	}
@@ -95,13 +95,13 @@ func osUserCacheDir() string {
 	return "."
 }
 
-func tokenCacheFile(oauthconfig *oauth.Config) string {
+func tokenCacheFile(dirName string, oauthconfig *oauth.Config) string {
 	hash := fnv.New32a()
 	hash.Write([]byte(oauthconfig.ClientId))
 	hash.Write([]byte(oauthconfig.ClientSecret))
 	hash.Write([]byte(oauthconfig.Scope))
 	fn := fmt.Sprintf("go-api-demo-tok%v", hash.Sum32())
-	return filepath.Join(osUserCacheDir(), url.QueryEscape(fn))
+	return filepath.Join(dirName, url.QueryEscape(fn))
 }
 
 func tokenFromFile(file string) (*oauth.Token, error) {
@@ -114,8 +114,8 @@ func tokenFromFile(file string) (*oauth.Token, error) {
 	return t, err
 }
 
-func saveToken(dirName, file string, token *oauth.Token) {
-	f, err := os.Create(filepath.Join(dirName, file))
+func saveToken(file string, token *oauth.Token) {
+	f, err := os.Create(file)
 	if err != nil {
 		log.Printf("Warning: failed to cache oauth token: %v", err)
 		return
@@ -158,7 +158,7 @@ func tokenFromWeb(oauthconfig *oauth.Config) *oauth.Token {
 	go openUrl(authUrl)
 	log.Printf("Authorize this app at: %s", authUrl)
 	code := <-ch
-	log.Printf("Got code: %s", code)
+	//log.Printf("Got code: %s", code)
 
 	t := &oauth.Transport{
 		Config:    oauthconfig,

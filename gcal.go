@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"code.google.com/p/goauth2/oauth"
 	"encoding/gob"
 	"fmt"
 	"hash/fnv"
@@ -19,12 +18,19 @@ import (
 	"strings"
 	"time"
 	//"errors"
+
 	calendar "code.google.com/p/google-api-go-client/calendar/v3"
+	//calendar "github.com/google/google-api-go-client/calendar/v3"
+
+	"code.google.com/p/goauth2/oauth"
+	//"golang.org/x/oauth2"
 )
 
+// LoginGcal ...
+// opens browser and authenticate as a gcal user
 func LoginGcal(config *GcalConfig, cacheDirName string) (*calendar.Service, error) {
 	var oauthconfig = &oauth.Config{
-		ClientId:     config.ClientId,
+		ClientId:     config.ClientID,
 		ClientSecret: config.ClientSecret,
 		Scope:        calendar.CalendarScope,
 		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
@@ -40,21 +46,25 @@ func LoginGcal(config *GcalConfig, cacheDirName string) (*calendar.Service, erro
 	return svc, err
 }
 
-func FetchEventByExtendedProperty(gcal *calendar.Service, calendarId string, epexpr string) (*calendar.Event, error) {
-	res, err := gcal.Events.List(calendarId).PrivateExtendedProperty(epexpr).Fields("items(id,summary,description,start,end,recurrence,extendedProperties)", "summary", "nextPageToken").Do()
+// FetchEventByExtendedProperty ...
+// to fetch an event corresponding to a Garoon event
+func FetchEventByExtendedProperty(gcal *calendar.Service, calendarID string, epexpr string) (*calendar.Event, error) {
+	res, err := gcal.Events.List(calendarID).PrivateExtendedProperty(epexpr).Fields("items(id,summary,description,start,end,recurrence,extendedProperties)", "summary", "nextPageToken").Do()
 	if err != nil {
 		return nil, err
 	}
 	for _, v := range res.Items {
-		//log.Printf("Calendar ID %q event: %v(%v) %v: %q\n", calendarId, v.Id, v.Kind, v.Updated, v.Summary)
+		//log.Printf("Calendar ID %q event: %v(%v) %v: %q\n", calendarID, v.Id, v.Kind, v.Updated, v.Summary)
 		return v, nil
 	}
 
 	return nil, nil
 }
 
-func FetchGcalEventListByDatetime(gcal *calendar.Service, calendarId string, start time.Time, end time.Time) (*calendar.Events, error) {
-	res, err := gcal.Events.List(calendarId).
+// FetchGcalEventListByDatetime ...
+// fetches events between start and end
+func FetchGcalEventListByDatetime(gcal *calendar.Service, calendarID string, start time.Time, end time.Time) (*calendar.Events, error) {
+	res, err := gcal.Events.List(calendarID).
 		TimeMin(start.Local().Format(time.RFC3339)).
 		TimeMax(end.Local().Format(time.RFC3339)).
 		Fields("items(id,summary,description,start,end,recurrence,extendedProperties)", "summary", "nextPageToken").
@@ -154,9 +164,9 @@ func tokenFromWeb(oauthconfig *oauth.Config) *oauth.Token {
 	defer ts.Close()
 
 	oauthconfig.RedirectURL = ts.URL
-	authUrl := oauthconfig.AuthCodeURL(randState)
-	go openUrl(authUrl)
-	log.Printf("Authorize this app at: %s", authUrl)
+	authURL := oauthconfig.AuthCodeURL(randState)
+	go openURL(authURL)
+	log.Printf("Authorize this app at: %s", authURL)
 	code := <-ch
 	//log.Printf("Got code: %s", code)
 
@@ -177,7 +187,7 @@ func condDebugTransport(rt http.RoundTripper) http.RoundTripper {
 	//return rt
 }
 
-func openUrl(url string) {
+func openURL(url string) {
 	err := exec.Command("cmd", "/C", "start", "", strings.Replace(url, "&", "^&", -1)).Run()
 	if err == nil {
 		return

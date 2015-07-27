@@ -1,21 +1,41 @@
 package main
 
 import (
-	"./garoon"
-	calendar "code.google.com/p/google-api-go-client/calendar/v3"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
+
+	calendar "code.google.com/p/google-api-go-client/calendar/v3"
+	//calendar "github.com/google/google-api-go-client/calendar/v3"
 )
 
 const (
-	GCAL_EP_KEY_GAROON_EVENT_ID string = "garoon_event_id"
-	CONFIG_DIR_NAME             string = ".grn2gcal"
-	CONFIG_FILE_NAME            string = "config.json"
+	gcalEPKeyGaroonEventID string = "garoon_event_id"
+	configDirName          string = ".grn2gcal"
+	configFileName         string = "config.json"
 )
+
+/*
+ * memo
+ *  for each Garoon event:
+ *	  convert it into a Gcal event
+ *	  fetch correspoindng(by ep) Gcal event
+ *	    if not found: insert converted Gcal event
+ *	    if found: compare converted Gcal event with fetched Gcal event
+ *		  if differs: update fetched Gcal evnent with converted Gcal event
+ *  for each Gcal event:
+ *    fetch corresponding(by ep) Garoon event
+ *    if not found: delete Gcal event
+ *
+ *	garoon:
+ *		- always time in UTC
+ *		  -> use timezone
+ */
 
 func main() {
 	fmt.Println("TODO:")
@@ -24,8 +44,10 @@ func main() {
 	fmt.Println("")
 	//fmt.Println("  - ")
 
-	configDirPath := filepath.Join(homeDirPath(), CONFIG_DIR_NAME)
-	configFilePath := filepath.Join(configDirPath, CONFIG_FILE_NAME)
+	configDirPath := filepath.Join(homeDirPath(), configDirName)
+	configFilePath := filepath.Join(configDirPath, configFileName)
+
+	// generate a config file
 
 	if _, err := os.Stat(configDirPath); err != nil {
 		fmt.Println("Creating a config directory: " + configDirPath)
@@ -52,17 +74,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	grn := garoon.New(config.Garoon.Account, config.Garoon.Password, config.Garoon.BaseUrl)
+	grn := NewGaroon(config.Garoon.Account, config.Garoon.Password, config.Garoon.BaseURL)
 
 	// get Garoon user id
 
-	targetUser, err := grn.UtilGetLoginUserId()
+	targetUser, err := grn.UtilGetLoginUserID()
 	if err != nil {
 		log.Fatalf("Failed to access to Garoon : %v", err)
 	}
-	fmt.Printf("user_id: %v\n", targetUser.UserId)
+	fmt.Printf("user_id: %v\n", targetUser.UserID)
 
-	// Google Calendar login
+	// Google Calendar login (borrowed from sample codes)
 
 	gcal, err := LoginGcal(&config.Gcal, configDirPath)
 	if err != nil {
@@ -73,7 +95,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to fetch a list of Gcal calendars: %v", err)
 	}
-	gcalCalendarId := listRes.Items[0].Id
+	gcalCalendarID := listRes.Items[0].Id
 
 	// List Garoon events
 
@@ -83,70 +105,73 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println("------------")
 	for _, grnEvent := range grnEventList.Events {
-		startDt, endDt, err := getGrnTimeSpan(grnEvent)
+		fmt.Printf("★%+v", grnEvent)
+		fmt.Println("------------")
+		if !isMemberOfGrnEvent(targetUser.UserID, grnEvent) {
+			continue
+		}
+
+		startDT, endDT, err := getGrnTimeSpan(grnEvent)
 		if err != nil {
 			log.Fatalf("Failed to get date/datetime values from a Garoon event: %v\n", err)
 		}
-		log.Printf("Garoon Event: %s - %s ... %s %s\n", startDt, endDt, formatForGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.Id)
+		log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
 
 		// Identify Gcal events and perform insert/update/delete
 
-		gcalFetchedEvent, _ := FetchEventByExtendedProperty(gcal, gcalCalendarId, GCAL_EP_KEY_GAROON_EVENT_ID+"="+grnEvent.Id)
+		gcalFetchedEvent, _ := FetchEventByExtendedProperty(gcal, gcalCalendarID, gcalEPKeyGaroonEventID+"="+grnEvent.ID)
 		if gcalFetchedEvent == nil {
 			log.Println("  => New")
 
 			// construct a Gcal Event
 
-			ep := calendar.EventExtendedProperties{}
-			ep.Private = make(map[string]string)
-			ep.Private[GCAL_EP_KEY_GAROON_EVENT_ID] = grnEvent.Id
-			ep.Shared = make(map[string]string)
-
-			newEvent := calendar.Event{
-				Summary:            formatForGcalSummary(grnEvent.Plan, grnEvent.Detail),
-				Description:        grnEvent.Description,
-				ExtendedProperties: &ep,
-			}
-			if len(grnEvent.Datetime) > 0 {
-				newEvent.Start = &calendar.EventDateTime{DateTime: startDt}
-				newEvent.End = &calendar.EventDateTime{DateTime: endDt}
-			}
-			if len(grnEvent.Date) > 0 {
-				newEvent.Start = &calendar.EventDateTime{Date: startDt}
-				newEvent.End = &calendar.EventDateTime{Date: endDt}
-			}
-
-			/*v*/ _, err := gcal.Events.Insert(gcalCalendarId, &newEvent).Do()
+			newEvent, err := convertIntoGcalEvent(grnEvent)
 			if err != nil {
-				log.Fatalf("    An error occurred inserting a Gcal event: %v\n", err)
+				log.Fatalf("Failed to convert Garoon event into Gcal event: %v\n", err)
 			}
-			//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarId, v.Id, v.Kind, v.Updated, v.Summary)
+			//log.Printf("☆grnEvent=%+v\n", grnEvent)
+			//log.Printf("☆grnEvent.Repeat.Condition=%+v\n", grnEvent.Repeat.Condition)
+			//log.Printf("☆grnEvent.Repeat.Exclusive=%+v\n", grnEvent.Repeat.Exclusive)
+			//for _, m := range grnEvent.Members {
+			//	log.Printf("☆grnEvent.Member=%+v\n", m)
+			//}
+			//log.Printf("★newEvent=%+v\n", newEvent)
+			//log.Printf("★newEvent.Start=%+v\n", newEvent.Start)
+			//log.Printf("★newEvent.End=%+v\n", newEvent.End)
 
+			/*v*/ _, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
+			if err != nil {
+				log.Printf("    An error occurred inserting a Gcal event: %v\n", err)
+				continue
+			}
+			//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarID, v.ID, v.Kind, v.Updated, v.Summary)
 		} else {
-			eq, cause := eventsAreEqual(grnEvent, gcalFetchedEvent)
+			grnGcalEvent, err := convertIntoGcalEvent(grnEvent)
+			if err != nil {
+			}
+			eq, cause := isEqualGcalEvent(&grnGcalEvent, gcalFetchedEvent)
+			//eq, cause := eventsAreEqual(grnEvent, gcalFetchedEvent)
 			if eq {
 				//log.Println("  => No Changes")
 			} else {
-				log.Printf("  => Change (%s)\n", cause)
+				log.Printf("  => Change (%v)\n", cause)
 
 				// re-construct the Gcal Event and update
 
-				gcalFetchedEvent.Summary = formatForGcalSummary(grnEvent.Plan, grnEvent.Detail)
-				gcalFetchedEvent.Description = grnEvent.Description
-				if len(grnEvent.Datetime) > 0 {
-					gcalFetchedEvent.Start = &calendar.EventDateTime{DateTime: startDt}
-					gcalFetchedEvent.End = &calendar.EventDateTime{DateTime: endDt}
-				}
-				if len(grnEvent.Date) > 0 {
-					gcalFetchedEvent.Start = &calendar.EventDateTime{Date: startDt}
-					gcalFetchedEvent.End = &calendar.EventDateTime{Date: endDt}
-				}
-				/*v*/ _, err := gcal.Events.Update(gcalCalendarId, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
+				gcalFetchedEvent.Summary = grnGcalEvent.Summary
+				gcalFetchedEvent.Description = grnGcalEvent.Description
+
+				gcalFetchedEvent.Recurrence = grnGcalEvent.Recurrence
+				gcalFetchedEvent.Start = grnGcalEvent.Start
+				gcalFetchedEvent.End = grnGcalEvent.End
+
+				/*v*/ _, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
 				if err != nil {
-					log.Fatalf("    An error occurred updating a Gcal event: %v\n", err)
+					log.Printf("    An error occurred updating a Gcal event: %v\n", err)
+					continue
 				}
-				//log.Printf("    Calendar ID %q event: %v: %+v\n", gcalCalendarId, v.Id, v)
 			}
 		}
 	}
@@ -154,25 +179,25 @@ func main() {
 	// list Gcal events
 
 	log.Printf("Deletion check")
-	gcalgrnEventList, err := FetchGcalEventListByDatetime(gcal, gcalCalendarId, syncStart, syncEnd)
+	gcalgrnEventList, err := FetchGcalEventListByDatetime(gcal, gcalCalendarID, syncStart, syncEnd)
 	if err != nil {
 		log.Fatalf("Failed to fetch a list of Gcal calendars: %v\n", err)
 	}
 	for _, gcalEvent := range gcalgrnEventList.Items {
-		startDt, endDt, err := getGcalTimeSpan(gcalEvent)
+		startDT, endDT, err := getGcalTimeSpan(gcalEvent)
 		if err != nil {
 			log.Fatalf("Failed to get date/datetime values from a Gcal event: %v\n", err)
 		}
 
-		log.Printf("Gcal Event: %s - %s ... %s\n", startDt, endDt, gcalEvent.Summary)
+		log.Printf("Gcal Event: %s - %s ... %s\n", startDT, endDT, gcalEvent.Summary)
 
-		// Garoon event id
+		// Garoon event ID
 		ep := gcalEvent.ExtendedProperties
 		if ep == nil {
 			// Gcal origin event
 			break // ignore
 		}
-		grnEventId, found := ep.Private[GCAL_EP_KEY_GAROON_EVENT_ID]
+		grnEventID, found := ep.Private[gcalEPKeyGaroonEventID]
 		if !found {
 			// Gcal origin event
 			break // ignore
@@ -180,17 +205,17 @@ func main() {
 
 		// Gcal event to be deleted
 
-		grnEventList, err := grn.ScheduleGetEventsById(grnEventId)
+		grnEventList, err := grn.ScheduleGetEventsByID(grnEventID)
 		if err != nil {
-			log.Fatalf("Failed to fetch a Garoon event(ID=%v): %v\n", grnEventId, err)
+			log.Fatalf("Failed to fetch a Garoon event(ID=%v): %v\n", grnEventID, err)
 		}
 
-		if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserId, grnEventList.Events[0]) {
+		if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) {
 			// Garoon origin event
 
 			log.Println("  => Delete")
 
-			err := gcal.Events.Delete(gcalCalendarId, gcalEvent.Id).Do()
+			err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
 			if err != nil {
 				log.Fatalf("    An error occurred deleting a Gcal event: %v\n", err)
 			}
@@ -198,26 +223,101 @@ func main() {
 	}
 }
 
-func eventsAreEqual(grnEvent *garoon.GaroonEvent, gcalEvent *calendar.Event) (bool, string) {
+func isEqualGcalEvent(grnGcalEvent, gcalEvent *calendar.Event) (bool, string) {
+	if grnGcalEvent == nil || gcalEvent == nil {
+		return false, "nil"
+	}
+
+	// ep(grnEvent.ID)
+	ep1 := grnGcalEvent.ExtendedProperties
+	if ep1 == nil {
+		return false, "ExtendedProperty1: nil"
+	}
+	epValue1, found := ep1.Private[gcalEPKeyGaroonEventID]
+	if !found {
+		epValue1 = ""
+	}
+	ep2 := gcalEvent.ExtendedProperties
+	if ep2 == nil {
+		return false, "ExtendedProperty2: nil"
+	}
+	epValue2, found := ep2.Private[gcalEPKeyGaroonEventID]
+	if !found {
+		epValue2 = ""
+	}
+	if epValue1 != epValue2 {
+		return false, fmt.Sprintf("ExtendedProperty: %v <=> %v", epValue1, epValue2)
+	}
+
+	// Summary
+	if grnGcalEvent.Summary != gcalEvent.Summary {
+		return false, fmt.Sprintf("Summary: %v <=> %v", grnGcalEvent.Summary, gcalEvent.Summary)
+	}
+
+	// Description
+	if grnGcalEvent.Description != gcalEvent.Description {
+		return false, fmt.Sprintf("Description: %v <=> %v", grnGcalEvent.Description, gcalEvent.Description)
+	}
+
+	// compare recurring or not
+	grnGcalEventRecurring := (len(grnGcalEvent.Recurrence) > 0)
+	gcalEventRecurring := (len(gcalEvent.Recurrence) > 0)
+	if grnGcalEventRecurring != gcalEventRecurring {
+		return false, fmt.Sprintf("Recurring: Garoon %v <=> Gcal %v", grnGcalEventRecurring, gcalEventRecurring)
+	}
+
+	if grnGcalEventRecurring {
+		if len(grnGcalEvent.Recurrence) != len(gcalEvent.Recurrence) {
+			return false, fmt.Sprintf("Recurrence: %v <=> %v", grnGcalEvent.Recurrence, gcalEvent.Recurrence)
+		}
+		for i := range grnGcalEvent.Recurrence {
+			if grnGcalEvent.Recurrence[i] != gcalEvent.Recurrence[i] {
+				return false, fmt.Sprintf("Recurrence: %v <=> %v", grnGcalEvent.Recurrence, gcalEvent.Recurrence)
+			}
+		}
+	}
+
+	// compare Start and End
+	// prepare
+	startDT, endDT, err := getGcalTimeSpan(grnGcalEvent)
+	if err != nil {
+		return false, fmt.Sprintf("Time span: failed to compare Garoon (start=%s, end=%s)", startDT, endDT)
+	}
+	gcalstartDT, gcalendDT, err := getGcalTimeSpan(gcalEvent)
+	if err != nil {
+		return false, fmt.Sprintf("Time span: failed to compare Gcal (start=%s, end=%s)", gcalstartDT, gcalendDT)
+	}
+	// compare
+	if startDT != gcalstartDT {
+		return false, fmt.Sprintf("Start: %v <=> %v", startDT, gcalstartDT)
+	}
+	if endDT != gcalendDT {
+		return false, fmt.Sprintf("End: %s <=> %s", endDT, gcalendDT)
+	}
+
+	return true, ""
+}
+
+func eventsAreEqual(grnEvent *GaroonEvent, gcalEvent *calendar.Event) (bool, string) {
 	if grnEvent == nil || gcalEvent == nil {
 		return false, "nil"
 	}
 
-	// Id  V.S.  ExtendedProperty
+	// ID  V.S.  ExtendedProperty
 	ep := gcalEvent.ExtendedProperties
 	if ep == nil {
 		return false, "ExtendedProperty: nil"
 	}
-	epValue, found := ep.Private[GCAL_EP_KEY_GAROON_EVENT_ID]
+	epValue, found := ep.Private[gcalEPKeyGaroonEventID]
 	if !found {
 		epValue = ""
 	}
-	if grnEvent.Id != epValue {
-		return false, fmt.Sprintf("ExtendedProperty: %+v(%T) <=> %+v(%T)", grnEvent.Id, grnEvent.Id, epValue, epValue)
+	if grnEvent.ID != epValue {
+		return false, fmt.Sprintf("ExtendedProperty: %+v(%T) <=> %+v(%T)", grnEvent.ID, grnEvent.ID, epValue, epValue)
 	}
 
 	// Detail (and Plan)  V.S.  Summary
-	grnDetail := formatForGcalSummary(grnEvent.Plan, grnEvent.Detail)
+	grnDetail := formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail)
 	if grnDetail != gcalEvent.Summary {
 		return false, fmt.Sprintf("Summary: %s <=> %s", grnDetail, gcalEvent.Summary)
 	}
@@ -227,45 +327,78 @@ func eventsAreEqual(grnEvent *garoon.GaroonEvent, gcalEvent *calendar.Event) (bo
 		return false, fmt.Sprintf("Description: %s <=> %s", grnEvent.Description, gcalEvent.Description)
 	}
 
+	// compare recurring or not
+	grnRecurring := (grnEvent.EventType == "repeat")
+	gcalRecurring := (len(gcalEvent.Recurrence) > 0)
+	if grnRecurring != gcalRecurring {
+		return false, fmt.Sprintf("Recurring: Garoon %v <=> Gcal %v", grnRecurring, gcalRecurring)
+	}
+
+	if grnRecurring {
+		// compare recurrence
+		// prepare
+		gcalRecurrence := gcalEvent.Recurrence
+		grnRecurrence, _, _ := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
+
+		//log.Printf("  * grnRecurrence: %+v\n", grnRecurrence)
+		//log.Printf("    grn normal part: %+v\n", grnEvent)
+		//log.Printf("  * gcalRecurrence: %+v\n", gcalRecurrence)
+		//log.Printf("    gcal normal part: %+v\n", gcalEvent)
+		//log.Printf("    gcal normal part Start: %+v\n", gcalEvent.Start)
+		//log.Printf("    gcal normal part End: %+v\n", gcalEvent.End)
+
+		// compare
+		if len(gcalRecurrence) != len(grnRecurrence) {
+			return false, fmt.Sprintf("Recurrence: %v <=> %v", grnRecurrence, gcalRecurrence)
+		}
+		for i := range grnRecurrence {
+			if gcalRecurrence[i] != grnRecurrence[i] {
+				return false, fmt.Sprintf("Recurrence: %v <=> %v", grnRecurrence, gcalRecurrence)
+			}
+		}
+	}
+
 	// compare Start and End
 	// prepare
-	startDt, endDt, err := getGrnTimeSpan(grnEvent)
+	startDT, endDT, err := getGrnTimeSpan(grnEvent)
 	if err != nil {
-		return false, fmt.Sprintf("Time span: failed to compare Garoon (start=%s, end=%s)", startDt, endDt)
+		return false, fmt.Sprintf("Time span: failed to compare Garoon (start=%s, end=%s)", startDT, endDT)
 	}
-	gcalStartDt, gcalEndDt, err := getGcalTimeSpan(gcalEvent)
+	gcalstartDT, gcalendDT, err := getGcalTimeSpan(gcalEvent)
 	if err != nil {
-		return false, fmt.Sprintf("Time span: failed to compare Gcal (start=%s, end=%s)", gcalStartDt, gcalEndDt)
+		return false, fmt.Sprintf("Time span: failed to compare Gcal (start=%s, end=%s)", gcalstartDT, gcalendDT)
 	}
 	// compare
-	if startDt != gcalStartDt {
-		return false, fmt.Sprintf("Start: %s <=> %s", startDt, gcalStartDt)
+	if startDT != gcalstartDT {
+		return false, fmt.Sprintf("Start: %v <=> %v", startDT, gcalstartDT)
 	}
-	if endDt != gcalEndDt {
-		return false, fmt.Sprintf("End: %s <=> %s", endDt, gcalEndDt)
+	if endDT != gcalendDT {
+		return false, fmt.Sprintf("End: %s <=> %s", endDT, gcalendDT)
 	}
 
 	return true, ""
 }
 
 func getGcalTimeSpan(gcalEvent *calendar.Event) (string, string, error) {
-	var gcalStartDt, gcalEndDt string
+	var gcalstartDT, gcalendDT string
 	if gcalEvent.Start.DateTime != "" {
-		gcalStartDt = gcalEvent.Start.DateTime
-		gcalEndDt = gcalEvent.End.DateTime
+		gcalstartDT = gcalEvent.Start.DateTime
+		gcalendDT = gcalEvent.End.DateTime
 	} else {
-		gcalStartDt = gcalEvent.Start.Date
-		gcalEndDt = gcalEvent.End.Date
+		gcalstartDT = gcalEvent.Start.Date
+		gcalendDT = gcalEvent.End.Date
 	}
-	return gcalStartDt, gcalEndDt, nil
+	return gcalstartDT, gcalendDT, nil
 }
 
-func getGrnTimeSpan(grnEvent *garoon.GaroonEvent) (string, string, error) {
+// start, end, error
+func getGrnTimeSpan(grnEvent *GaroonEvent) (string, string, error) {
 	if grnEvent == nil {
 		return "", "", nil
 	}
 
 	var start, end string
+	var err error
 	var isDateOnly bool
 
 	if len(grnEvent.Datetime) > 0 {
@@ -276,19 +409,29 @@ func getGrnTimeSpan(grnEvent *garoon.GaroonEvent) (string, string, error) {
 			end = start
 		}
 
-		// convert timezone ... Garoon always UTC -> Local timezone
+		// convert timezone ... Garoon always UTC -> Garoon Event TimeZone
+		//
+		// Garoon
+		//	 DateTime: 2006-01-02T15:04:05Z00:00
+		//	 TimeZone: Asia/Tokyo
+		// => Gcal
+		//	 DateTime: 2006-01-02T15:04:05Z09:00
+		//	 TimeZone: Asia/Tokyo
+		//
 
-		startAsDatetime, err := time.Parse(time.RFC3339, start)
+		start, err = convertGrnDateTimeIntoGcalDateTime(start, grnEvent.TimeZone)
 		if err != nil {
-			return "", "", fmt.Errorf("Failed to parse Garoon Datetime(%s): %v", start, err)
+			log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
 		}
-		start = startAsDatetime.Local().Format(time.RFC3339)
 
-		endAsDatetime, err := time.Parse(time.RFC3339, end)
-		if err != nil {
-			return "", "", fmt.Errorf("Failed to parse Garoon Datetime(%s): %v", end, err)
+		endTZ := grnEvent.TimeZone
+		if grnEvent.EndTimeZone != "" {
+			endTZ = grnEvent.EndTimeZone
 		}
-		end = endAsDatetime.Local().Format(time.RFC3339)
+		end, err = convertGrnDateTimeIntoGcalDateTime(end, endTZ)
+		if err != nil {
+			log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+		}
 
 	} else if len(grnEvent.Date) > 0 {
 		isDateOnly = true
@@ -302,30 +445,48 @@ func getGrnTimeSpan(grnEvent *garoon.GaroonEvent) (string, string, error) {
 	// Garoon [stt, end]
 	// => Gcal Date span is [stt, end)
 	if isDateOnly && start != end {
-		endDt, err := time.Parse("2006-01-02", end)
+		endDT, err := time.Parse("2006-01-02", end)
 		if err != nil {
 			return "", "", fmt.Errorf("Failed to parse Garoon Date(%s): %v", end, err)
 		}
-		end = endDt.AddDate(0, 0, 1).Format("2006-01-02")
+		end = endDT.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
 	return start, end, nil
 }
 
-func isMemberOfGrnEvent(userId string, grnEvent *garoon.GaroonEvent) bool {
+func convertGrnDateTimeIntoGcalDateTime(grnDT, grnTZ string) (string, error) {
+	loc, err := time.LoadLocation(grnTZ)
+	if err != nil {
+		return "", err
+	}
+
+	//_, offset := time.Now().In(loc).Zone()
+
+	dt, err := time.Parse(time.RFC3339, grnDT)
+	if err != nil {
+		return "", err
+	}
+
+	//fmt.Printf("grnDT=%v, grnTZ=%v(%v), In(loc)=%v, conved=%v\n", grnDT, grnTZ, offset, dt.In(loc).Format(time.RFC3339), dt.Add(-time.Duration(offset)*time.Second).In(loc).Format(time.RFC3339))
+	//return dt.Add(-time.Duration(offset) * time.Second).In(loc).Format(time.RFC3339), nil
+	return dt.In(loc).Format(time.RFC3339), nil
+}
+
+func isMemberOfGrnEvent(userID string, grnEvent *GaroonEvent) bool {
 	if grnEvent == nil {
 		return false
 	}
 
 	for _, user := range grnEvent.Members {
-		if userId == user.Id {
+		if userID == user.ID {
 			return true
 		}
 	}
 	return false
 }
 
-func formatForGcalSummary(menu, title string) string {
+func formatAsGcalSummary(menu, title string) string {
 	summary := ""
 
 	if menu != "" {
@@ -338,6 +499,150 @@ func formatForGcalSummary(menu, title string) string {
 	summary += title
 
 	return summary
+}
+
+func convertGrnRecurrenceIntoGcalRecurrence(grnEvent *GaroonEvent) ([]string, *calendar.EventDateTime, *calendar.EventDateTime) {
+	if grnEvent == nil || grnEvent.Repeat == nil || grnEvent.Repeat.Condition == nil {
+		return nil, nil, nil
+	}
+
+	result := make([]string, 0, 3)
+
+	grncond := grnEvent.Repeat.Condition
+	start := grncond.StartDate
+	if grncond.StartTime != "" {
+		start += "T" + grncond.StartTime + "Z"
+	}
+	end := grncond.StartDate // not grncond.EndDate
+	if grncond.EndTime != "" {
+		end += "T" + grncond.EndTime + "Z"
+	}
+	until := strings.Replace(grncond.EndDate, "-", "", -1)
+
+	rrule := ""
+
+	weekdays := []string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
+	monthweekqualifier := ""
+	switch grncond.Type {
+	case "1stweek":
+		monthweekqualifier = "1"
+	case "2ndweek":
+		monthweekqualifier = "2"
+	case "3rdweek":
+		monthweekqualifier = "3"
+	case "4thweek":
+		monthweekqualifier = "4"
+	case "lastweek":
+		monthweekqualifier = "-1"
+	}
+
+	switch grncond.Type {
+	case "day":
+		rrule = "RRULE:FREQ=DAILY;UNTIL=" + until
+
+	case "weekday":
+		rrule = "RRULE:FREQ=WEEKLY;UNTIL=" + until + ";BYDAY=MO,TU,WE,TH,FR"
+
+	case "1stweek":
+		if monthweekqualifier == "" {
+			monthweekqualifier = "1"
+		}
+		fallthrough
+	case "2ndweek":
+		if monthweekqualifier == "" {
+			monthweekqualifier = "2"
+		}
+		fallthrough
+	case "3rdweek":
+		if monthweekqualifier == "" {
+			monthweekqualifier = "3"
+		}
+		fallthrough
+	case "4thweek":
+		if monthweekqualifier == "" {
+			monthweekqualifier = "4"
+		}
+		fallthrough
+	case "lastweek":
+		if monthweekqualifier == "" {
+			monthweekqualifier = "-1"
+		}
+		weekdayno, err := strconv.Atoi(grncond.Week)
+		if err != nil || (grncond.Week < "0" || "6" < grncond.Week) {
+			log.Printf("Invalid Garoon Repeat Week(%v)\n", grncond.Week)
+			return nil, nil, nil
+		}
+		rrule = "RRULE:FREQ=MONTHLY;UNTIL=" + until + ";BYDAY=" + monthweekqualifier + weekdays[weekdayno]
+
+	case "week":
+		weekdayno, err := strconv.Atoi(grncond.Week)
+		if err != nil || (grncond.Week < "0" || "6" < grncond.Week) {
+			log.Printf("Invalid Garoon Repeat Week(%v)\n", grncond.Week)
+			return nil, nil, nil
+		}
+		rrule = "RRULE:FREQ=WEEKLY;UNTIL=" + until + ";BYDAY=" + weekdays[weekdayno]
+	}
+	result = append(result, rrule)
+
+	start, err := convertGrnDateTimeIntoGcalDateTime(start, grnEvent.TimeZone)
+	if err != nil {
+		log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
+	}
+	startDT, _ := time.Parse(time.RFC3339, start)
+	_, offset := startDT.Zone()
+	start = startDT.Add(-time.Duration(offset) * time.Second).Format(time.RFC3339)
+
+	endTZ := grnEvent.TimeZone
+	if grnEvent.EndTimeZone != "" {
+		endTZ = grnEvent.EndTimeZone
+	}
+	end, err = convertGrnDateTimeIntoGcalDateTime(end, endTZ)
+	if err != nil {
+		log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+	}
+	endDT, _ := time.Parse(time.RFC3339, end)
+	_, offset = endDT.Zone()
+	end = endDT.Add(-time.Duration(offset) * time.Second).Format(time.RFC3339)
+
+	return result,
+		&calendar.EventDateTime{DateTime: start, TimeZone: grnEvent.TimeZone},
+		&calendar.EventDateTime{DateTime: end, TimeZone: endTZ}
+}
+
+// convert a Garoon event into a Gcal event
+// without extened properties.
+func convertIntoGcalEvent(grnEvent *GaroonEvent) (calendar.Event, error) {
+	ep := calendar.EventExtendedProperties{}
+	ep.Private = make(map[string]string)
+	ep.Private[gcalEPKeyGaroonEventID] = grnEvent.ID
+	ep.Shared = make(map[string]string)
+
+	gcalEvent := calendar.Event{
+		Summary:            formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail),
+		Description:        grnEvent.Description,
+		ExtendedProperties: &ep,
+	}
+
+	startDT, endDT, _ := getGrnTimeSpan(grnEvent)
+	if grnEvent.Repeat != nil {
+		r, s, e := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
+		if len(r) > 0 {
+			gcalEvent.Recurrence = r
+		}
+		gcalEvent.Start = s
+		gcalEvent.End = e
+	} else {
+		if len(grnEvent.Datetime) > 0 {
+			gcalEvent.Start = &calendar.EventDateTime{DateTime: startDT}
+			gcalEvent.End = &calendar.EventDateTime{DateTime: endDT}
+		}
+		if len(grnEvent.Date) > 0 {
+			gcalEvent.Start = &calendar.EventDateTime{Date: startDT}
+			gcalEvent.End = &calendar.EventDateTime{Date: endDT}
+		}
+	}
+
+	return gcalEvent, nil
 }
 
 func homeDirPath() string {

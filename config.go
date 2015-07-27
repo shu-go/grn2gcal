@@ -6,14 +6,18 @@ import (
 	"io/ioutil"
 )
 
+// Config ...
+// a global configs
 type Config struct {
 	Garoon GaroonConfig `json:"garoon"`
 	Gcal   GcalConfig   `json:"gcal"`
 }
 
+// GaroonConfig ...
+// a config to access to your garoon
 type GaroonConfig struct {
 	// url of grn.exe
-	BaseUrl string `json:"url"`
+	BaseURL string `json:"url"`
 
 	// account name.
 	Account string `json:"account"`
@@ -22,11 +26,15 @@ type GaroonConfig struct {
 	Password string `json:"password"`
 }
 
+// GcalConfig ...
+// a config to access to your gcal
 type GcalConfig struct {
-	ClientId     string `json:"client_id"`
+	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 }
 
+// NewConfig ...
+// create a global config
 func NewConfig(filename string) (*Config, error) {
 	file, err := ioutil.ReadFile(filename)
 	if err != nil {
@@ -41,6 +49,8 @@ func NewConfig(filename string) (*Config, error) {
 	return &config, nil
 }
 
+// CreateConfigTemplate ...
+// create a template file for convenient
 func CreateConfigTemplate(filename string) error {
 	var config Config
 	marshaled, err := json.Marshal(config)
@@ -55,8 +65,10 @@ func CreateConfigTemplate(filename string) error {
 	return nil
 }
 
+// ValidateConfig ...
+// validate contents of a config
 func ValidateConfig(config *Config) error {
-	if config.Gcal.ClientId == "" {
+	if config.Gcal.ClientID == "" {
 		return errors.New("config validattion error: gcal.client_id is missing")
 	}
 	if config.Gcal.ClientSecret == "" {

@@ -107,8 +107,6 @@ func main() {
 	}
 	fmt.Println("------------")
 	for _, grnEvent := range grnEventList.Events {
-		fmt.Printf("★%+v", grnEvent)
-		fmt.Println("------------")
 		if !isMemberOfGrnEvent(targetUser.UserID, grnEvent) {
 			continue
 		}
@@ -117,7 +115,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to get date/datetime values from a Garoon event: %v\n", err)
 		}
-		log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+		if grnEvent.Repeat != nil {
+			r, s, e := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
+			log.Printf("Garoon Event: %v - %v REPEAT %v ... %v %v\n", s.DateTime, e.DateTime, r, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+		} else {
+			log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+		}
 
 		// Identify Gcal events and perform insert/update/delete
 
@@ -513,7 +516,7 @@ func convertGrnRecurrenceIntoGcalRecurrence(grnEvent *GaroonEvent) ([]string, *c
 	if grncond.StartTime != "" {
 		start += "T" + grncond.StartTime + "Z"
 	}
-	end := grncond.StartDate // not grncond.EndDate
+	end := grncond.StartDate // not grncond.EndDate, as a unit event
 	if grncond.EndTime != "" {
 		end += "T" + grncond.EndTime + "Z"
 	}
@@ -581,6 +584,9 @@ func convertGrnRecurrenceIntoGcalRecurrence(grnEvent *GaroonEvent) ([]string, *c
 			return nil, nil, nil
 		}
 		rrule = "RRULE:FREQ=WEEKLY;UNTIL=" + until + ";BYDAY=" + weekdays[weekdayno]
+
+	case "month":
+		rrule = "RRULE:FREQ=MONTHLY;UNTIL=" + until
 	}
 	result = append(result, rrule)
 

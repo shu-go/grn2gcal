@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	calendar "code.google.com/p/google-api-go-client/calendar/v3"
@@ -105,79 +106,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	fmt.Println("------------")
+
+	var wg sync.WaitGroup
 	for _, grnEvent := range grnEventList.Events {
 		if !isMemberOfGrnEvent(targetUser.UserID, grnEvent) {
 			continue
 		}
 
-		startDT, endDT, err := getGrnTimeSpan(grnEvent)
-		if err != nil {
-			log.Fatalf("Failed to get date/datetime values from a Garoon event: %v\n", err)
-		}
-		if grnEvent.Repeat != nil {
-			r, s, e := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
-			log.Printf("Garoon Event: %v - %v REPEAT %v ... %v %v\n", s.DateTime, e.DateTime, r, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
-		} else {
-			log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
-		}
-
-		// Identify Gcal events and perform insert/update/delete
-
-		gcalFetchedEvent, _ := FetchEventByExtendedProperty(gcal, gcalCalendarID, gcalEPKeyGaroonEventID+"="+grnEvent.ID)
-		if gcalFetchedEvent == nil {
-			log.Println("  => New")
-
-			// construct a Gcal Event
-
-			newEvent, err := convertIntoGcalEvent(grnEvent)
-			if err != nil {
-				log.Fatalf("Failed to convert Garoon event into Gcal event: %v\n", err)
-			}
-			//log.Printf("☆grnEvent=%+v\n", grnEvent)
-			//log.Printf("☆grnEvent.Repeat.Condition=%+v\n", grnEvent.Repeat.Condition)
-			//log.Printf("☆grnEvent.Repeat.Exclusive=%+v\n", grnEvent.Repeat.Exclusive)
-			//for _, m := range grnEvent.Members {
-			//	log.Printf("☆grnEvent.Member=%+v\n", m)
-			//}
-			//log.Printf("★newEvent=%+v\n", newEvent)
-			//log.Printf("★newEvent.Start=%+v\n", newEvent.Start)
-			//log.Printf("★newEvent.End=%+v\n", newEvent.End)
-
-			/*v*/ _, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
-			if err != nil {
-				log.Printf("    An error occurred inserting a Gcal event: %v\n", err)
-				continue
-			}
-			//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarID, v.ID, v.Kind, v.Updated, v.Summary)
-		} else {
-			grnGcalEvent, err := convertIntoGcalEvent(grnEvent)
-			if err != nil {
-			}
-			eq, cause := isEqualGcalEvent(&grnGcalEvent, gcalFetchedEvent)
-			//eq, cause := eventsAreEqual(grnEvent, gcalFetchedEvent)
-			if eq {
-				//log.Println("  => No Changes")
-			} else {
-				log.Printf("  => Change (%v)\n", cause)
-
-				// re-construct the Gcal Event and update
-
-				gcalFetchedEvent.Summary = grnGcalEvent.Summary
-				gcalFetchedEvent.Description = grnGcalEvent.Description
-
-				gcalFetchedEvent.Recurrence = grnGcalEvent.Recurrence
-				gcalFetchedEvent.Start = grnGcalEvent.Start
-				gcalFetchedEvent.End = grnGcalEvent.End
-
-				/*v*/ _, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
-				if err != nil {
-					log.Printf("    An error occurred updating a Gcal event: %v\n", err)
-					continue
-				}
-			}
-		}
+		go checkAndExecGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg)
 	}
+	wg.Wait()
 
 	// list Gcal events
 
@@ -661,4 +601,79 @@ func homeDirPath() string {
 	}
 
 	return path
+}
+
+func checkAndExecGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID string, wg *sync.WaitGroup) {
+	wg.Add(1)
+
+	startDT, endDT, err := getGrnTimeSpan(grnEvent)
+	if err != nil {
+		log.Fatalf("Failed to get date/datetime values from a Garoon event: %v\n", err)
+	}
+	if grnEvent.Repeat != nil {
+		r, s, e := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
+		log.Printf("Garoon Event: %v - %v REPEAT %v ... %v %v\n", s.DateTime, e.DateTime, r, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+	} else {
+		log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+	}
+
+	// Identify Gcal events and perform insert/update/delete
+
+	gcalFetchedEvent, _ := FetchEventByExtendedProperty(gcal, gcalCalendarID, gcalEPKeyGaroonEventID+"="+grnEvent.ID)
+	if gcalFetchedEvent == nil {
+		log.Println("  => New")
+
+		// construct a Gcal Event
+
+		newEvent, err := convertIntoGcalEvent(grnEvent)
+		if err != nil {
+			log.Fatalf("Failed to convert Garoon event into Gcal event: %v\n", err)
+		}
+		//log.Printf("☆grnEvent=%+v\n", grnEvent)
+		//log.Printf("☆grnEvent.Repeat.Condition=%+v\n", grnEvent.Repeat.Condition)
+		//log.Printf("☆grnEvent.Repeat.Exclusive=%+v\n", grnEvent.Repeat.Exclusive)
+		//for _, m := range grnEvent.Members {
+		//	log.Printf("☆grnEvent.Member=%+v\n", m)
+		//}
+		//log.Printf("★newEvent=%+v\n", newEvent)
+		//log.Printf("★newEvent.Start=%+v\n", newEvent.Start)
+		//log.Printf("★newEvent.End=%+v\n", newEvent.End)
+
+		/*v*/ _, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
+		if err != nil {
+			log.Printf("    An error occurred inserting a Gcal event: %v\n", err)
+			//continue
+			return
+		}
+		//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarID, v.ID, v.Kind, v.Updated, v.Summary)
+	} else {
+		grnGcalEvent, err := convertIntoGcalEvent(grnEvent)
+		if err != nil {
+		}
+		eq, cause := isEqualGcalEvent(&grnGcalEvent, gcalFetchedEvent)
+		//eq, cause := eventsAreEqual(grnEvent, gcalFetchedEvent)
+		if eq {
+			//log.Println("  => No Changes")
+		} else {
+			log.Printf("  => Change (%v)\n", cause)
+
+			// re-construct the Gcal Event and update
+
+			gcalFetchedEvent.Summary = grnGcalEvent.Summary
+			gcalFetchedEvent.Description = grnGcalEvent.Description
+
+			gcalFetchedEvent.Recurrence = grnGcalEvent.Recurrence
+			gcalFetchedEvent.Start = grnGcalEvent.Start
+			gcalFetchedEvent.End = grnGcalEvent.End
+
+			/*v*/ _, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
+			if err != nil {
+				log.Printf("    An error occurred updating a Gcal event: %v\n", err)
+				//continue
+				return
+			}
+		}
+	}
+
+	wg.Done()
 }

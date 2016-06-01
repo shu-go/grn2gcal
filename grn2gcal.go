@@ -101,7 +101,7 @@ func main() {
 	// List Garoon events
 
 	syncStart := time.Now() //FirstDayOfMonth(time.Now()).AddDate(0, -1, 0)
-	syncEnd := LastDayOfMonth(time.Now()).AddDate(0, +1, 0)
+	syncEnd := LastDayOfMonth(time.Now()).AddDate(0, +2, 0)
 	grnEventList, err := grn.ScheduleGetEvents(syncStart, syncEnd)
 	if err != nil {
 		log.Fatal(err)

@@ -115,7 +115,7 @@ func main() {
 			continue
 		}
 
-		go checkAndExecGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg)
+		go syncGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg)
 	}
 	wg.Wait()
 
@@ -127,43 +127,9 @@ func main() {
 		log.Fatalf("Failed to fetch a list of Gcal calendars: %v\n", err)
 	}
 	for _, gcalEvent := range gcalgrnEventList.Items {
-		startDT, endDT, err := getGcalTimeSpan(gcalEvent)
-		if err != nil {
-			log.Fatalf("Failed to get date/datetime values from a Gcal event: %v\n", err)
-		}
-
-		log.Printf("Gcal Event: %s - %s ... %s\n", startDT, endDT, gcalEvent.Summary)
-
-		// Garoon event ID
-		ep := gcalEvent.ExtendedProperties
-		if ep == nil {
-			// Gcal origin event
-			break // ignore
-		}
-		grnEventID, found := ep.Private[gcalEPKeyGaroonEventID]
-		if !found {
-			// Gcal origin event
-			break // ignore
-		}
-
-		// Gcal event to be deleted
-
-		grnEventList, err := grn.ScheduleGetEventsByID(grnEventID)
-		if err != nil {
-			log.Fatalf("Failed to fetch a Garoon event(ID=%v): %v\n", grnEventID, err)
-		}
-
-		if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) {
-			// Garoon origin event
-
-			log.Println("  => Delete")
-
-			err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
-			if err != nil {
-				log.Fatalf("    An error occurred deleting a Gcal event: %v\n", err)
-			}
-		}
+		go syncGcal2Grn(gcalEvent, gcal, gcalCalendarID, grn, targetUser, &wg)
 	}
+	wg.Wait()
 }
 
 func isEqualGcalEvent(grnGcalEvent, gcalEvent *calendar.Event) (bool, string) {
@@ -603,7 +569,7 @@ func homeDirPath() string {
 	return path
 }
 
-func checkAndExecGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID string, wg *sync.WaitGroup) {
+func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID string, wg *sync.WaitGroup) {
 	wg.Add(1)
 
 	startDT, endDT, err := getGrnTimeSpan(grnEvent)
@@ -672,6 +638,57 @@ func checkAndExecGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCal
 				//continue
 				return
 			}
+		}
+	}
+
+	wg.Done()
+}
+
+func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalendarID string, grn *Service, targetUser UtilGetLoginUserIDResult, wg *sync.WaitGroup) {
+	wg.Add(1)
+
+	startDT, endDT, err := getGcalTimeSpan(gcalEvent)
+	if err != nil {
+		log.Printf("Failed to get date/datetime values from a Gcal event: %v\n", err)
+		wg.Done()
+		return
+	}
+
+	log.Printf("Gcal Event: %s - %s ... %s\n", startDT, endDT, gcalEvent.Summary)
+
+	// Garoon event ID
+	ep := gcalEvent.ExtendedProperties
+	if ep == nil {
+		// Gcal origin event
+		wg.Done()
+		return
+	}
+	grnEventID, found := ep.Private[gcalEPKeyGaroonEventID]
+	if !found {
+		// Gcal origin event
+		wg.Done()
+		return
+	}
+
+	// Gcal event to be deleted
+
+	grnEventList, err := grn.ScheduleGetEventsByID(grnEventID)
+	if err != nil {
+		log.Printf("Failed to fetch a Garoon event(ID=%v): %v\n", grnEventID, err)
+		wg.Done()
+		return
+	}
+
+	if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) {
+		// Garoon origin event
+
+		log.Println("  => Delete")
+
+		err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
+		if err != nil {
+			log.Printf("    An error occurred deleting a Gcal event: %v\n", err)
+			wg.Done()
+			return
 		}
 	}
 

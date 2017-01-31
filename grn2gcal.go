@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"bitbucket.org/shu/log"
 
 	calendar "code.google.com/p/google-api-go-client/calendar/v3"
 	//calendar "github.com/google/google-api-go-client/calendar/v3"
@@ -53,13 +54,15 @@ func main() {
 	if _, err := os.Stat(configDirPath); err != nil {
 		fmt.Println("Creating a config directory: " + configDirPath)
 		if err := os.MkdirAll(configDirPath, 0600); err != nil {
-			log.Fatal(err)
+			log.Print(err)
+			return
 		}
 	}
 	if _, err := os.Stat(configFilePath); err != nil {
 		fmt.Println("Creating a config file: " + configFilePath)
 		if err := CreateConfigTemplate(configFilePath); err != nil {
-			log.Fatal(err)
+			log.Print(err)
+			return
 		}
 		fmt.Println("A config file is created. Run again after filling the file up.")
 		return
@@ -67,7 +70,8 @@ func main() {
 
 	config, err := NewConfig(configFilePath)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	if err := ValidateConfig(config); err != nil {
@@ -81,7 +85,8 @@ func main() {
 
 	targetUser, err := grn.UtilGetLoginUserID()
 	if err != nil {
-		log.Fatalf("Failed to access to Garoon : %v", err)
+		log.Printf("Failed to access to Garoon : %v", err)
+		return
 	}
 	fmt.Printf("user_id: %v\n", targetUser.UserID)
 
@@ -89,12 +94,14 @@ func main() {
 
 	gcal, err := LoginGcal(&config.Gcal, configDirPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	listRes, err := gcal.CalendarList.List().Fields("items/id").Do()
 	if err != nil {
-		log.Fatalf("Failed to fetch a list of Gcal calendars: %v", err)
+		log.Printf("Failed to fetch a list of Gcal calendars: %v", err)
+		return
 	}
 	gcalCalendarID := listRes.Items[0].Id
 
@@ -104,7 +111,8 @@ func main() {
 	syncEnd := LastDayOfMonth(time.Now()).AddDate(0, +2, 0)
 	grnEventList, err := grn.ScheduleGetEvents(syncStart, syncEnd)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	fmt.Println("------------")
@@ -124,10 +132,11 @@ func main() {
 	log.Printf("Deletion check")
 	gcalgrnEventList, err := FetchGcalEventListByDatetime(gcal, gcalCalendarID, syncStart, syncEnd)
 	if err != nil {
-		log.Fatalf("Failed to fetch a list of Gcal calendars: %v\n", err)
-	}
-	for _, gcalEvent := range gcalgrnEventList.Items {
-		go syncGcal2Grn(gcalEvent, gcal, gcalCalendarID, grn, targetUser, &wg)
+		log.Printf("Failed to fetch a list of Gcal calendars: %v\n", err)
+	} else {
+		for _, gcalEvent := range gcalgrnEventList.Items {
+			go syncGcal2Grn(gcalEvent, gcal, gcalCalendarID, grn, targetUser, &wg)
+		}
 	}
 	wg.Wait()
 }
@@ -330,7 +339,8 @@ func getGrnTimeSpan(grnEvent *GaroonEvent) (string, string, error) {
 
 		start, err = convertGrnDateTimeIntoGcalDateTime(start, grnEvent.TimeZone)
 		if err != nil {
-			log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
+			log.Printf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
+			return "", "", err
 		}
 
 		endTZ := grnEvent.TimeZone
@@ -339,7 +349,8 @@ func getGrnTimeSpan(grnEvent *GaroonEvent) (string, string, error) {
 		}
 		end, err = convertGrnDateTimeIntoGcalDateTime(end, endTZ)
 		if err != nil {
-			log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+			log.Printf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+			return "", "", err
 		}
 
 	} else if len(grnEvent.Date) > 0 {
@@ -498,7 +509,8 @@ func convertGrnRecurrenceIntoGcalRecurrence(grnEvent *GaroonEvent) ([]string, *c
 
 	start, err := convertGrnDateTimeIntoGcalDateTime(start, grnEvent.TimeZone)
 	if err != nil {
-		log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
+		log.Printf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", start, err)
+		return nil, nil, nil
 	}
 	startDT, _ := time.Parse(time.RFC3339, start)
 	_, offset := startDT.Zone()
@@ -510,7 +522,8 @@ func convertGrnRecurrenceIntoGcalRecurrence(grnEvent *GaroonEvent) ([]string, *c
 	}
 	end, err = convertGrnDateTimeIntoGcalDateTime(end, endTZ)
 	if err != nil {
-		log.Fatalf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+		log.Printf("Failed to convert Garoon DateTime(%v) into Gcal DateTime: %v\n", end, err)
+		return nil, nil, nil
 	}
 	endDT, _ := time.Parse(time.RFC3339, end)
 	_, offset = endDT.Zone()
@@ -574,10 +587,17 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 
 	startDT, endDT, err := getGrnTimeSpan(grnEvent)
 	if err != nil {
-		log.Fatalf("Failed to get date/datetime values from a Garoon event: %v\n", err)
+		log.Printf("Failed to get date/datetime values from a Garoon event: %v\n", err)
+		wg.Done()
+		return
 	}
 	if grnEvent.Repeat != nil {
 		r, s, e := convertGrnRecurrenceIntoGcalRecurrence(grnEvent)
+		if r == nil && s == nil && e == nil {
+			log.Printf("Failed to convert recurrence (%v %v) of %s", grnEvent.Repeat, grnEvent.Repeat.Condition, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
+			wg.Done()
+			return
+		}
 		log.Printf("Garoon Event: %v - %v REPEAT %v ... %v %v\n", s.DateTime, e.DateTime, r, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
 	} else {
 		log.Printf("Garoon Event: %v - %v ... %v %v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail), grnEvent.ID)
@@ -593,7 +613,9 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 
 		newEvent, err := convertIntoGcalEvent(grnEvent)
 		if err != nil {
-			log.Fatalf("Failed to convert Garoon event into Gcal event: %v\n", err)
+			log.Printf("Failed to convert Garoon event into Gcal event: %v\n", err)
+			wg.Done()
+			return
 		}
 		//log.Printf("☆grnEvent=%+v\n", grnEvent)
 		//log.Printf("☆grnEvent.Repeat.Condition=%+v\n", grnEvent.Repeat.Condition)
@@ -605,10 +627,12 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 		//log.Printf("★newEvent.Start=%+v\n", newEvent.Start)
 		//log.Printf("★newEvent.End=%+v\n", newEvent.End)
 
-		/*v*/ _, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
+		/*v*/
+		_, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
 		if err != nil {
 			log.Printf("    An error occurred inserting a Gcal event: %v\n", err)
 			//continue
+			wg.Done()
 			return
 		}
 		//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarID, v.ID, v.Kind, v.Updated, v.Summary)
@@ -632,10 +656,12 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 			gcalFetchedEvent.Start = grnGcalEvent.Start
 			gcalFetchedEvent.End = grnGcalEvent.End
 
-			/*v*/ _, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
+			/*v*/
+			_, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
 			if err != nil {
 				log.Printf("    An error occurred updating a Gcal event: %v\n", err)
 				//continue
+				wg.Done()
 				return
 			}
 		}

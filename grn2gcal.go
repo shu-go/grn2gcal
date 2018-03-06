@@ -10,10 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/shu/log"
+	"bitbucket.org/shu/rog"
 
-	calendar "code.google.com/p/google-api-go-client/calendar/v3"
-	//calendar "github.com/google/google-api-go-client/calendar/v3"
+	calendar "google.golang.org/api/calendar/v3"
 )
 
 const (
@@ -38,6 +37,8 @@ const (
  *		- always time in UTC
  *		  -> use timezone
  */
+
+var log = rog.New(os.Stderr, "", rog.Ltime)
 
 func main() {
 	fmt.Println("TODO:")
@@ -607,7 +608,7 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 
 	gcalFetchedEvent, _ := FetchEventByExtendedProperty(gcal, gcalCalendarID, gcalEPKeyGaroonEventID+"="+grnEvent.ID)
 	if gcalFetchedEvent == nil {
-		log.Println("  => New")
+		log.Print("  => New")
 
 		// construct a Gcal Event
 
@@ -708,7 +709,7 @@ func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalenda
 	if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) {
 		// Garoon origin event
 
-		log.Println("  => Delete")
+		log.Print("  => Delete")
 
 		err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
 		if err != nil {

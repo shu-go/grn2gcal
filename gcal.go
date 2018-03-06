@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,22 +19,22 @@ import (
 	"time"
 	//"errors"
 
-	calendar "code.google.com/p/google-api-go-client/calendar/v3"
-	//calendar "github.com/google/google-api-go-client/calendar/v3"
+	calendar "google.golang.org/api/calendar/v3"
 
-	"code.google.com/p/goauth2/oauth"
-	//"golang.org/x/oauth2"
+	"golang.org/x/oauth2"
 )
 
 // LoginGcal ...
 // opens browser and authenticate as a gcal user
 func LoginGcal(config *GcalConfig, cacheDirName string) (*calendar.Service, error) {
-	var oauthconfig = &oauth.Config{
-		ClientId:     config.ClientID,
+	var oauthconfig = &oauth2.Config{
+		ClientID:     config.ClientID,
 		ClientSecret: config.ClientSecret,
-		Scope:        calendar.CalendarScope,
-		AuthURL:      "https://accounts.google.com/o/oauth2/auth",
-		TokenURL:     "https://accounts.google.com/o/oauth2/token",
+		Scopes:       []string{calendar.CalendarScope},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://accounts.google.com/o/oauth2/token",
+		},
 	}
 
 	client := getOAuthClient(oauthconfig, cacheDirName)
@@ -75,7 +75,7 @@ func FetchGcalEventListByDatetime(gcal *calendar.Service, calendarID string, sta
 	return res, nil
 }
 
-func getOAuthClient(oauthconfig *oauth.Config, cacheDirName string) *http.Client {
+func getOAuthClient(oauthconfig *oauth2.Config, cacheDirName string) *http.Client {
 	cacheFile := tokenCacheFile(cacheDirName, oauthconfig)
 	token, err := tokenFromFile(cacheFile)
 	if err != nil {
@@ -85,13 +85,7 @@ func getOAuthClient(oauthconfig *oauth.Config, cacheDirName string) *http.Client
 		//log.Printf("Using cached token %#v from %q", token, cacheFile)
 	}
 
-	t := &oauth.Transport{
-		Token:     token,
-		Config:    oauthconfig,
-		Transport: http.DefaultTransport,
-		//Transport: condDebugTransport(http.DefaultTransport),
-	}
-	return t.Client()
+	return oauthconfig.Client(context.Background(), token)
 }
 
 func osUserCacheDir() string {
@@ -105,26 +99,26 @@ func osUserCacheDir() string {
 	return "."
 }
 
-func tokenCacheFile(dirName string, oauthconfig *oauth.Config) string {
+func tokenCacheFile(dirName string, oauthconfig *oauth2.Config) string {
 	hash := fnv.New32a()
-	hash.Write([]byte(oauthconfig.ClientId))
+	hash.Write([]byte(oauthconfig.ClientID))
 	hash.Write([]byte(oauthconfig.ClientSecret))
-	hash.Write([]byte(oauthconfig.Scope))
+	hash.Write([]byte(oauthconfig.Scopes[0]))
 	fn := fmt.Sprintf("go-api-demo-tok%v", hash.Sum32())
 	return filepath.Join(dirName, url.QueryEscape(fn))
 }
 
-func tokenFromFile(file string) (*oauth.Token, error) {
+func tokenFromFile(file string) (*oauth2.Token, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
 	}
-	t := new(oauth.Token)
+	t := new(oauth2.Token)
 	err = gob.NewDecoder(f).Decode(t)
 	return t, err
 }
 
-func saveToken(file string, token *oauth.Token) {
+func saveToken(file string, token *oauth2.Token) {
 	f, err := os.Create(file)
 	if err != nil {
 		log.Printf("Warning: failed to cache oauth token: %v", err)
@@ -134,7 +128,7 @@ func saveToken(file string, token *oauth.Token) {
 	gob.NewEncoder(f).Encode(token)
 }
 
-func tokenFromWeb(oauthconfig *oauth.Config) *oauth.Token {
+func tokenFromWeb(oauthconfig *oauth2.Config) *oauth2.Token {
 	ch := make(chan string)
 	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
 	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -170,16 +164,13 @@ func tokenFromWeb(oauthconfig *oauth.Config) *oauth.Token {
 	code := <-ch
 	//log.Printf("Got code: %s", code)
 
-	t := &oauth.Transport{
-		Config:    oauthconfig,
-		Transport: http.DefaultTransport,
-		//Transport: condDebugTransport(http.DefaultTransport),
-	}
-	_, err := t.Exchange(code)
+	token, err := oauthconfig.Exchange(context.Background(), code)
 	if err != nil {
-		log.Fatalf("Token exchange error: %v", err)
+		//log.Fatalf("Token exchange error: %v", err)
+		log.Printf("Token exchange error: %v", err)
+		return nil
 	}
-	return t.Token
+	return token
 }
 
 func condDebugTransport(rt http.RoundTripper) http.RoundTripper {

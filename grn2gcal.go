@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/shu/rog"
+	"bitbucket.org/shu_go/rog"
 
 	calendar "google.golang.org/api/calendar/v3"
 )

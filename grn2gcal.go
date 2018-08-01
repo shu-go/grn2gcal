@@ -124,6 +124,10 @@ func main() {
 			continue
 		}
 
+		if strings.HasPrefix(grnEvent.Detail, "*") {
+			continue
+		}
+
 		go syncGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg)
 	}
 	wg.Wait()
@@ -706,7 +710,9 @@ func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalenda
 		return
 	}
 
-	if len(grnEventList.Events) == 0 || !isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) {
+	if len(grnEventList.Events) == 0 ||
+		!isMemberOfGrnEvent(targetUser.UserID, grnEventList.Events[0]) ||
+		strings.HasPrefix(grnEventList.Events[0].Detail, "*") {
 		// Garoon origin event
 
 		log.Print("  => Delete")

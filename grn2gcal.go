@@ -56,14 +56,14 @@ func main() {
 		fmt.Println("Creating a config directory: " + configDirPath)
 		if err := os.MkdirAll(configDirPath, 0600); err != nil {
 			log.Print(err)
-			return
+			os.Exit(1)
 		}
 	}
 	if _, err := os.Stat(configFilePath); err != nil {
 		fmt.Println("Creating a config file: " + configFilePath)
 		if err := CreateConfigTemplate(configFilePath); err != nil {
 			log.Print(err)
-			return
+			os.Exit(1)
 		}
 		fmt.Println("A config file is created. Run again after filling the file up.")
 		return
@@ -72,7 +72,7 @@ func main() {
 	config, err := NewConfig(configFilePath)
 	if err != nil {
 		log.Print(err)
-		return
+		os.Exit(1)
 	}
 
 	if err := ValidateConfig(config); err != nil {
@@ -87,7 +87,7 @@ func main() {
 	targetUser, err := grn.UtilGetLoginUserID()
 	if err != nil {
 		log.Printf("Failed to access to Garoon : %v", err)
-		return
+		os.Exit(1)
 	}
 	fmt.Printf("user_id: %v\n", targetUser.UserID)
 
@@ -96,13 +96,13 @@ func main() {
 	gcal, err := LoginGcal(&config.Gcal, configDirPath)
 	if err != nil {
 		log.Print(err)
-		return
+		os.Exit(1)
 	}
 
 	listRes, err := gcal.CalendarList.List().Fields("items/id").Do()
 	if err != nil {
 		log.Printf("Failed to fetch a list of Gcal calendars: %v", err)
-		return
+		os.Exit(1)
 	}
 	gcalCalendarID := listRes.Items[0].Id
 
@@ -113,7 +113,7 @@ func main() {
 	grnEventList, err := grn.ScheduleGetEvents(syncStart, syncEnd)
 	if err != nil {
 		log.Print(err)
-		return
+		os.Exit(1)
 	}
 
 	fmt.Println("------------")

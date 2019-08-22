@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/shu_go/rog"
+	"github.com/shu-go/rog"
 
 	calendar "google.golang.org/api/calendar/v3"
 )
@@ -38,7 +38,7 @@ const (
  *		  -> use timezone
  */
 
-var log = rog.New(os.Stderr, "", rog.Ltime)
+var log = rog.New(os.Stderr, "", rog.Ltime /*|rog.Lshortfile*/)
 
 func main() {
 	fmt.Println("TODO:")

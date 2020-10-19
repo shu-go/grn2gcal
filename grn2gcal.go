@@ -99,12 +99,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	listRes, err := gcal.CalendarList.List().Fields("items/id").Do()
+	//listRes, err := gcal.CalendarList.List().Fields("items/id").Do()
+	listRes, err := gcal.CalendarList.List().Fields("items(id,accessRole,deleted,primary,selected)").Do()
 	if err != nil {
 		log.Printf("Failed to fetch a list of Gcal calendars: %v", err)
 		os.Exit(1)
 	}
-	gcalCalendarID := listRes.Items[0].Id
+	//gcalCalendarID := listRes.Items[0].Id
+	var gcalCalendarID string
+	for _, c := range listRes.Items {
+		if c.Primary {
+			gcalCalendarID = c.Id
+			break
+		}
+	}
+	if gcalCalendarID == "" {
+		log.Print("No primary calendar.")
+		os.Exit(1)
+	}
 
 	// List Garoon events
 

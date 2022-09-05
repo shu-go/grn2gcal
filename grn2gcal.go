@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,6 +317,10 @@ func eventsAreEqual(grnEvent *GaroonEvent, gcalEvent *calendar.Event) (bool, str
 }
 
 func getGcalTimeSpan(gcalEvent *calendar.Event) (string, string, error) {
+	if gcalEvent == nil || gcalEvent.Start == nil {
+		return "", "", errors.New("start, end is null")
+	}
+
 	var gcalstartDT, gcalendDT string
 	if gcalEvent.Start.DateTime != "" {
 		gcalstartDT = gcalEvent.Start.DateTime
@@ -696,6 +701,11 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 
 func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalendarID string, grn *Service, targetUser UtilGetLoginUserIDResult, wg *sync.WaitGroup, updm *sync.Mutex) {
 	wg.Add(1)
+
+	if gcalEvent == nil || gcalEvent.Start == nil {
+		wg.Done()
+		return
+	}
 
 	startDT, endDT, err := getGcalTimeSpan(gcalEvent)
 	if err != nil {

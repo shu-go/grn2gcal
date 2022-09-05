@@ -131,6 +131,7 @@ func main() {
 	fmt.Println("------------")
 
 	var wg sync.WaitGroup
+	var updm sync.Mutex
 	for _, grnEvent := range grnEventList.Events {
 		if !isMemberOfGrnEvent(targetUser.UserID, grnEvent) {
 			continue
@@ -140,7 +141,7 @@ func main() {
 			continue
 		}
 
-		go syncGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg)
+		go syncGrn2Gcal(grnEvent, gcal, gcalCalendarID, &wg, &updm)
 	}
 	wg.Wait()
 
@@ -151,8 +152,8 @@ func main() {
 	if err != nil {
 		log.Printf("Failed to fetch a list of Gcal calendars: %v\n", err)
 	} else {
-		for _, gcalEvent := range gcalgrnEventList.Items {
-			go syncGcal2Grn(gcalEvent, gcal, gcalCalendarID, grn, targetUser, &wg)
+		for i := range gcalgrnEventList.Items {
+			go syncGcal2Grn(gcalgrnEventList.Items[i], gcal, gcalCalendarID, grn, targetUser, &wg, &updm)
 		}
 	}
 	wg.Wait()
@@ -599,7 +600,7 @@ func homeDirPath() string {
 	return path
 }
 
-func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID string, wg *sync.WaitGroup) {
+func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID string, wg *sync.WaitGroup, updm *sync.Mutex) {
 	wg.Add(1)
 
 	startDT, endDT, err := getGrnTimeSpan(grnEvent)
@@ -645,13 +646,16 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 		//log.Printf("★newEvent.End=%+v\n", newEvent.End)
 
 		/*v*/
+		updm.Lock()
 		_, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
 		if err != nil {
 			log.Printf("    An error occurred inserting a Gcal event: %v\n", err)
 			//continue
+			updm.Unlock()
 			wg.Done()
 			return
 		}
+		updm.Unlock()
 		//log.Printf("    Calendar ID %q event: %v(%v) %v: %q\n", gcalCalendarID, v.ID, v.Kind, v.Updated, v.Summary)
 	} else {
 		grnGcalEvent, err := convertIntoGcalEvent(grnEvent)
@@ -674,20 +678,23 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 			gcalFetchedEvent.End = grnGcalEvent.End
 
 			/*v*/
+			updm.Lock()
 			_, err := gcal.Events.Update(gcalCalendarID, gcalFetchedEvent.Id, gcalFetchedEvent).Do()
 			if err != nil {
 				log.Printf("    An error occurred updating a Gcal event: %v\n", err)
 				//continue
+				updm.Unlock()
 				wg.Done()
 				return
 			}
+			updm.Unlock()
 		}
 	}
 
 	wg.Done()
 }
 
-func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalendarID string, grn *Service, targetUser UtilGetLoginUserIDResult, wg *sync.WaitGroup) {
+func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalendarID string, grn *Service, targetUser UtilGetLoginUserIDResult, wg *sync.WaitGroup, updm *sync.Mutex) {
 	wg.Add(1)
 
 	startDT, endDT, err := getGcalTimeSpan(gcalEvent)
@@ -729,12 +736,15 @@ func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalenda
 
 		log.Print("  => Delete")
 
+		updm.Lock()
 		err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
 		if err != nil {
 			log.Printf("    An error occurred deleting a Gcal event: %v\n", err)
+			updm.Unlock()
 			wg.Done()
 			return
 		}
+		updm.Unlock()
 	}
 
 	wg.Done()

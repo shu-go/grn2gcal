@@ -12,6 +12,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/gen2brain/beeep"
 	"github.com/shu-go/rog"
 
 	calendar "google.golang.org/api/calendar/v3"
@@ -651,6 +652,8 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 		//log.Printf("★newEvent.Start=%+v\n", newEvent.Start)
 		//log.Printf("★newEvent.End=%+v\n", newEvent.End)
 
+		beeep.Notify("Add Gcal Event", fmt.Sprintf("%v - %v\n%v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail)), "" /*"assets/information.png"*/)
+
 		/*v*/
 		updm.Lock()
 		_, err = gcal.Events.Insert(gcalCalendarID, &newEvent).Do()
@@ -682,6 +685,8 @@ func syncGrn2Gcal(grnEvent *GaroonEvent, gcal *calendar.Service, gcalCalendarID 
 			gcalFetchedEvent.Recurrence = grnGcalEvent.Recurrence
 			gcalFetchedEvent.Start = grnGcalEvent.Start
 			gcalFetchedEvent.End = grnGcalEvent.End
+
+			beeep.Notify("Update Gcal Event", fmt.Sprintf("%v - %v\n%v\n", startDT, endDT, formatAsGcalSummary(grnEvent.Plan, grnEvent.Detail)), "" /*"assets/information.png"*/)
 
 			/*v*/
 			updm.Lock()
@@ -746,6 +751,8 @@ func syncGcal2Grn(gcalEvent *calendar.Event, gcal *calendar.Service, gcalCalenda
 		// Garoon origin event
 
 		log.Print("  => Delete")
+
+		beeep.Notify("DELETE Gcal Event", fmt.Sprintf("%s - %s\n%s\n", startDT, endDT, gcalEvent.Summary), "" /*"assets/information.png"*/)
 
 		updm.Lock()
 		err := gcal.Events.Delete(gcalCalendarID, gcalEvent.Id).Do()
